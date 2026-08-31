@@ -47,12 +47,23 @@ class PasteService:
 
     def _paste(self, mapping: KeyMapping) -> None:
         snapshot = None
+        clipboard_replaced = False
         try:
             snapshot = self._clipboard.snapshot()
+            if snapshot.skipped_formats and not snapshot.formats:
+                self._status_callback(
+                    "error",
+                    "Paste cancelled to protect the clipboard: its current format cannot be cloned safely.",
+                )
+                return
+
             self._clipboard.set_text(mapping.text)
+            clipboard_replaced = True
             send_ctrl_v()
             time.sleep(self._restore_delay)
             self._clipboard.restore(snapshot)
+            clipboard_replaced = False
+
             if snapshot.skipped_formats:
                 self._status_callback(
                     "warning",
@@ -61,7 +72,7 @@ class PasteService:
             else:
                 self._status_callback("ok", f"Pasted “{mapping.name or mapping.key}”.")
         except Exception as exc:
-            if snapshot is not None:
+            if snapshot is not None and clipboard_replaced:
                 try:
                     self._clipboard.restore(snapshot)
                 except Exception as restore_exc:
