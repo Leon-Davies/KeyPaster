@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keypaster"
+version = "0.1.0"
+description = "A small Windows utility that maps keys to reusable text snippets."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "Pillow>=11.0,<12",
+  "pystray>=0.19.5,<0.20",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pyinstaller>=6.11,<7",
+]
+
+[project.scripts]
+keypaster = "keypaster.app:main"
+
+[tool.setuptools.packages.find]
+include = ["keypaster*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
