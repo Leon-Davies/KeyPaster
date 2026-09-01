@@ -1,10 +1,10 @@
 # KeyPaster
 
-KeyPaster is a lightweight Windows utility for mapping a keyboard key to a reusable block of text.
+KeyPaster is a lightweight Windows utility, built entirely in **Python**, for mapping a keyboard key to a reusable block of text.
 
 Press a mapped key and KeyPaster temporarily saves your clipboard, pastes the configured text into the active application, then restores your previous clipboard. The key's normal action is suppressed while the mapping is active — for example, **Page Down** can paste a prompt instead of scrolling.
 
-If you use **AutoHotkey mainly for fixed text snippets**, KeyPaster is a focused alternative for that use case. It is especially useful when managing multiple AI or coding agents and repeatedly sending similar review, follow-up, or handoff prompts.
+If you use **AutoHotkey mainly for fixed text snippets**, KeyPaster is a focused alternative for that use case. It has no AutoHotkey dependency. It is especially useful when managing multiple AI or coding agents and repeatedly sending similar review, follow-up, or handoff prompts.
 
 ![KeyPaster interface](docs/keypaster-ui.png)
 
