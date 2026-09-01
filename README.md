@@ -1,63 +1,67 @@
 # KeyPaster
 
-KeyPaster is a small Windows utility for mapping a single keyboard key to a reusable block of text.
+KeyPaster is a lightweight Windows utility for mapping a keyboard key to a reusable block of text.
 
-When you press a mapped key, KeyPaster:
+Press a mapped key and KeyPaster temporarily saves your clipboard, pastes the configured text into the active application, then restores your previous clipboard. The key's normal action is suppressed while the mapping is active — for example, **Page Down** can paste a prompt instead of scrolling.
+
+If you use **AutoHotkey mainly for fixed text snippets**, KeyPaster is a focused alternative for that use case. It is especially useful when managing multiple AI or coding agents and repeatedly sending similar review, follow-up, or handoff prompts.
+
+![KeyPaster interface](docs/keypaster-ui.png)
+
+## Install
+
+**Requirements:** Windows 10/11 and Python 3.11 or newer.
+
+1. Click **Code → Download ZIP** on this repository and extract it.
+2. Double-click `Run-KeyPaster.bat`.
+3. On first launch, KeyPaster creates its own `.venv`, installs the required Python packages, and opens the app.
+
+After the first launch, run `Run-KeyPaster.bat` whenever you want to start KeyPaster.
+
+## Use
+
+1. Click **New mapping**.
+2. Give the mapping a name.
+3. Choose the keyboard key to replace.
+4. Enter the text you want that key to paste.
+5. Click **Save mapping**.
+6. Switch to any normal text field and press the mapped key.
+
+Closing the main window keeps KeyPaster running in the notification area. Use **Pause hotkeys** when you temporarily want the mapped keys to behave normally.
+
+Mappings are saved persistently in:
+
+```text
+%APPDATA%\KeyPaster\config.json
+```
+
+## How it works
+
+For each mapped key press, KeyPaster:
 
 1. snapshots the current Windows clipboard;
-2. places your configured text on the clipboard;
-3. sends `Ctrl+V` to the currently focused application;
-4. waits briefly for the target application to consume the paste; and
-5. restores the previous clipboard contents.
+2. places the mapped text on the clipboard;
+3. sends `Ctrl+V` to the active application; and
+4. restores the previous clipboard contents.
 
-A successfully registered mapped key is consumed as a Windows global hotkey, so its normal action is replaced while KeyPaster is active. For example, mapping **Page Down** means Page Down pastes your text instead of scrolling.
+KeyPaster uses Windows global hotkeys, so a successfully mapped key replaces its normal action while KeyPaster is active.
 
-## What V1 includes
+## Build a standalone executable
 
-- A graphical editor for creating, editing and deleting mappings.
-- A broad choice of navigation, function, letter, number and numpad keys.
-- Persistent configuration in `%APPDATA%\KeyPaster\config.json`.
-- Immediate hotkey updates after saving a mapping.
-- Automatic protection against assigning the same key twice.
-- A warning when Windows refuses a reserved or conflicting key.
-- Clipboard restoration for common HGLOBAL-backed Windows formats, including Unicode text, HTML/RTF payloads, DIB images, file-drop payloads and many registered formats.
-- A notification-area icon: closing the window hides KeyPaster instead of stopping your mappings.
-- A **Pause hotkeys** control.
-- Hotkeys automatically pause while the KeyPaster editor itself has focus, making it possible to edit text even if you map a letter key.
-- **Start KeyPaster with Windows** when running the packaged `.exe`.
-- A Windows GitHub Actions build that produces a portable `KeyPaster.exe`.
+After running the source version once, double-click `Build-KeyPaster.bat`.
 
-## Fastest way to use it
+The executable is created at:
 
-### Packaged executable
+```text
+dist\KeyPaster.exe
+```
 
-Open the latest successful **Windows CI and build** workflow in GitHub Actions, download the `KeyPaster-Windows` artifact, extract it, and run `KeyPaster.exe`.
+Your mappings are stored in your Windows profile, so replacing or rebuilding the executable does not remove them.
 
-The executable is portable. Your mappings are stored in your Windows profile rather than next to the executable, so rebuilding or replacing the `.exe` does not erase them.
+## Current limits
 
-### Run from source
-
-If Python 3.11+ is installed, double-click `Run-KeyPaster.bat`. On first run it creates a local `.venv`, installs the two runtime dependencies, and launches KeyPaster without a console window.
-
-## First-use test
-
-1. Open KeyPaster.
-2. Click **New mapping**.
-3. Choose **Page Down**.
-4. Enter a name and some multi-line text, then click **Save mapping**.
-5. Copy a recognisable piece of text such as `ORIGINAL CLIPBOARD`.
-6. Click into Notepad (or another text field) and press **Page Down**.
-7. Confirm the mapped text is pasted and the page does not scroll.
-8. Press normal `Ctrl+V`; `ORIGINAL CLIPBOARD` should paste, proving the previous clipboard was restored.
-
-## Notes and limits
-
-- KeyPaster is Windows-only.
-- F12 is intentionally unavailable because Windows reserves it for debuggers.
-- Windows can refuse a key if another program has already registered it globally; KeyPaster reports that mapping as unavailable.
-- `SendInput` follows normal Windows integrity rules. A non-elevated KeyPaster instance cannot inject input into an elevated application.
-- Clipboard formats backed by opaque handles rather than movable global memory are not cloned. KeyPaster restores the common data representations used by normal text, rich text, browser content, copied files and typical copied images. If an uncommon clipboard format cannot be cloned, the UI reports a warning after the paste.
-
-## Build locally
-
-Double-click `Build-KeyPaster.bat` after the source environment exists. The result is written to `dist\KeyPaster.exe`.
+- Windows only.
+- V1 maps individual keys rather than key combinations.
+- F12 is unavailable because Windows reserves it for debuggers.
+- Another application may already own a global hotkey; KeyPaster will report the conflict.
+- A non-elevated KeyPaster process cannot send input to an elevated application.
