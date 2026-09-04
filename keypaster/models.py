@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from .actions import PASTE_TEXT
+
 
 @dataclass(slots=True)
 class KeyMapping:
@@ -12,10 +14,25 @@ class KeyMapping:
     key: str
     text: str
     enabled: bool = True
+    action: str = PASTE_TEXT
 
     @classmethod
-    def create(cls, *, name: str, key: str, text: str) -> "KeyMapping":
-        return cls(id=str(uuid4()), name=name.strip(), key=key, text=text, enabled=True)
+    def create(
+        cls,
+        *,
+        name: str,
+        key: str,
+        text: str = "",
+        action: str = PASTE_TEXT,
+    ) -> "KeyMapping":
+        return cls(
+            id=str(uuid4()),
+            name=name.strip(),
+            key=key,
+            text=text,
+            enabled=True,
+            action=action,
+        )
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "KeyMapping":
@@ -25,6 +42,7 @@ class KeyMapping:
             key=str(data["key"]),
             text=str(data.get("text", "")),
             enabled=bool(data.get("enabled", True)),
+            action=str(data.get("action", PASTE_TEXT)),
         )
 
     def to_dict(self) -> dict[str, Any]:

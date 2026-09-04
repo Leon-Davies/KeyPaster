@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable
 
+from .actions import ACTION_ID_BY_LABEL, PASTE_TEXT, action_label, action_labels
 from .config import ConfigError, ConfigStore
 from .keys import KEY_ID_BY_LABEL, key_label, key_labels
 from .models import AppConfig, KeyMapping
@@ -44,10 +45,11 @@ class KeyPasterUI:
         self._registration_errors: dict[str, str] = {}
 
         self.root.title("KeyPaster")
-        self.root.geometry("960x650")
-        self.root.minsize(820, 560)
+        self.root.geometry("960x690")
+        self.root.minsize(820, 600)
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self._handle_close)
+        self.root.bind("<Unmap>", self._handle_unmap, add="+")
 
         self._configure_styles()
         self._build_ui()
@@ -77,7 +79,7 @@ class KeyPasterUI:
         tk.Label(title_block, text="KeyPaster", font=("Segoe UI Semibold", 24), fg=TEXT, bg=BG).pack(anchor="w")
         tk.Label(
             title_block,
-            text="Map a keyboard key to reusable text, then paste it anywhere with one press.",
+            text="Map a key to text or a media control.",
             font=("Segoe UI", 10),
             fg=MUTED,
             bg=BG,
@@ -115,12 +117,12 @@ class KeyPasterUI:
         left_heading = tk.Frame(left, bg=CARD)
         left_heading.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 10))
         tk.Label(left_heading, text="Mappings", font=("Segoe UI Semibold", 14), fg=TEXT, bg=CARD).pack(side="left")
-        self.new_button = self._primary_button(left_heading, "＋ New mapping", self._new_mapping)
+        self.new_button = self._primary_button(left_heading, "+ New mapping", self._new_mapping)
         self.new_button.pack(side="right")
 
         tk.Label(
             left,
-            text="A mapped key is replaced globally while KeyPaster is active.",
+            text="Mapped keys replace their normal action while KeyPaster is active.",
             font=("Segoe UI", 9),
             fg=MUTED,
             bg=CARD,
@@ -132,7 +134,7 @@ class KeyPasterUI:
         tree_frame.grid_columnconfigure(0, weight=1)
         self.tree = ttk.Treeview(tree_frame, columns=("key", "name"), show="headings", selectmode="browse")
         self.tree.heading("key", text="Key")
-        self.tree.heading("name", text="Name / preview")
+        self.tree.heading("name", text="Name / action")
         self.tree.column("key", width=120, minwidth=90, stretch=False)
         self.tree.column("name", width=240, minwidth=160, stretch=True)
         self.tree.grid(row=0, column=0, sticky="nsew")
@@ -144,7 +146,7 @@ class KeyPasterUI:
         right = self._card(body)
         right.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
         right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(7, weight=1)
+        right.grid_rowconfigure(9, weight=1)
 
         tk.Label(right, text="Mapping details", font=("Segoe UI Semibold", 14), fg=TEXT, bg=CARD).grid(
             row=0, column=0, sticky="w", padx=22, pady=(20, 14)
@@ -165,17 +167,37 @@ class KeyPasterUI:
         )
         self.key_combo.grid(row=4, column=0, sticky="ew", padx=22, pady=(0, 13))
 
-        self._field_label(right, "Text to paste", 5)
-        tk.Label(
+        self._field_label(right, "Action", 5)
+        self.action_var = tk.StringVar()
+        self.action_combo = ttk.Combobox(
+            right,
+            textvariable=self.action_var,
+            values=action_labels(),
+            state="readonly",
+            font=("Segoe UI", 10),
+        )
+        self.action_combo.grid(row=6, column=0, sticky="ew", padx=22, pady=(0, 13))
+        self.action_combo.bind("<<ComboboxSelected>>", self._on_action_change)
+
+        self.text_field_label = tk.Label(
+            right,
+            text="Text to paste",
+            font=("Segoe UI Semibold", 9),
+            fg=TEXT,
+            bg=CARD,
+        )
+        self.text_field_label.grid(row=7, column=0, sticky="w", padx=22, pady=(0, 5))
+        self.text_hint = tk.Label(
             right,
             text="Line breaks and Unicode are preserved.",
             font=("Segoe UI", 8),
             fg=MUTED,
             bg=CARD,
-        ).grid(row=6, column=0, sticky="w", padx=22, pady=(0, 5))
+        )
+        self.text_hint.grid(row=8, column=0, sticky="w", padx=22, pady=(0, 5))
 
         text_frame = tk.Frame(right, bg=BORDER, padx=1, pady=1)
-        text_frame.grid(row=7, column=0, sticky="nsew", padx=22, pady=(0, 14))
+        text_frame.grid(row=9, column=0, sticky="nsew", padx=22, pady=(0, 14))
         text_frame.grid_rowconfigure(0, weight=1)
         text_frame.grid_columnconfigure(0, weight=1)
         self.text_box = tk.Text(
@@ -196,7 +218,7 @@ class KeyPasterUI:
         self.text_box.configure(yscrollcommand=text_scroll.set)
 
         actions = tk.Frame(right, bg=CARD)
-        actions.grid(row=8, column=0, sticky="ew", padx=22, pady=(0, 14))
+        actions.grid(row=10, column=0, sticky="ew", padx=22, pady=(0, 14))
         self.save_button = self._primary_button(actions, "Save mapping", self._save_mapping)
         self.save_button.pack(side="left")
         self.delete_button = self._secondary_button(actions, "Delete", self._delete_mapping, danger=True)
@@ -283,12 +305,19 @@ class KeyPasterUI:
         for item in self.tree.get_children():
             self.tree.delete(item)
         for mapping in self.config.mappings:
-            preview = " ".join(mapping.text.split())
-            if len(preview) > 42:
-                preview = preview[:39] + "…"
-            description = mapping.name or preview
+            if mapping.action == PASTE_TEXT:
+                preview = " ".join(mapping.text.split())
+                if len(preview) > 34:
+                    preview = preview[:31] + "..."
+            else:
+                preview = action_label(mapping.action)
+            description = mapping.name
+            if description and preview:
+                description = f"{description} | {preview}"
+            else:
+                description = description or preview
             if mapping.id in self._registration_errors:
-                description = f"⚠ {description}"
+                description = f"! {description}"
             self.tree.insert("", "end", iid=mapping.id, values=(key_label(mapping.key), description))
         if self.selected_id and self.tree.exists(self.selected_id):
             self.tree.selection_set(self.selected_id)
@@ -304,33 +333,61 @@ class KeyPasterUI:
         self.selected_id = mapping.id
         self.name_var.set(mapping.name)
         self.key_var.set(key_label(mapping.key))
-        self.text_box.delete("1.0", "end")
-        self.text_box.insert("1.0", mapping.text)
+        self.action_var.set(action_label(mapping.action))
+        self._set_text(mapping.text)
+        self._update_action_controls()
 
     def _new_mapping(self) -> None:
         self.selected_id = None
         self.tree.selection_remove(*self.tree.selection())
         self.name_var.set("")
         self.key_var.set("Page Down")
-        self.text_box.delete("1.0", "end")
+        self.action_var.set(action_label(PASTE_TEXT))
+        self._set_text("")
+        self._update_action_controls()
         self.name_entry.focus_set()
+
+    def _on_action_change(self, _event: object = None) -> None:
+        self._update_action_controls()
+
+    def _update_action_controls(self) -> None:
+        action_id = ACTION_ID_BY_LABEL.get(self.action_var.get(), PASTE_TEXT)
+        if action_id == PASTE_TEXT:
+            self.text_box.configure(state="normal", bg="#FBFCFE")
+            self.text_hint.configure(text="Line breaks and Unicode are preserved.")
+        else:
+            self.text_box.configure(state="disabled", bg="#F1F3F6")
+            self.text_hint.configure(text="No text is required for this action.")
+
+    def _set_text(self, text: str) -> None:
+        previous_state = str(self.text_box.cget("state"))
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+        self.text_box.insert("1.0", text)
+        if previous_state == "disabled":
+            self.text_box.configure(state="disabled")
 
     def _save_mapping(self) -> None:
         label = self.key_var.get().strip()
         key_id = KEY_ID_BY_LABEL.get(label)
-        text = self.text_box.get("1.0", "end-1c")
+        action_name = self.action_var.get().strip()
+        action_id = ACTION_ID_BY_LABEL.get(action_name)
+        text = self.text_box.get("1.0", "end-1c") if action_id == PASTE_TEXT else ""
         name = self.name_var.get().strip()
         if not key_id:
             messagebox.showwarning("Choose a key", "Choose the keyboard key you want to map.", parent=self.root)
             return
-        if not text:
+        if not action_id:
+            messagebox.showwarning("Choose an action", "Choose what the key should do.", parent=self.root)
+            return
+        if action_id == PASTE_TEXT and not text:
             messagebox.showwarning("Add text", "Enter the text KeyPaster should paste.", parent=self.root)
             return
         duplicate = next((m for m in self.config.mappings if m.key == key_id and m.id != self.selected_id), None)
         if duplicate:
             messagebox.showwarning(
                 "Key already mapped",
-                f"{label} is already mapped to “{duplicate.name or 'another entry'}”. Choose a different key.",
+                f"{label} is already mapped to {duplicate.name or 'another entry'}. Choose a different key.",
                 parent=self.root,
             )
             return
@@ -340,8 +397,9 @@ class KeyPasterUI:
                 mapping.name = name
                 mapping.key = key_id
                 mapping.text = text
+                mapping.action = action_id
         else:
-            mapping = KeyMapping.create(name=name, key=key_id, text=text)
+            mapping = KeyMapping.create(name=name, key=key_id, text=text, action=action_id)
             self.config.mappings.append(mapping)
             self.selected_id = mapping.id
         try:
@@ -374,8 +432,6 @@ class KeyPasterUI:
         self._set_status("ok", "Mapping deleted.")
 
     def _apply_hotkeys(self, show_errors: bool) -> None:
-        # Always stage the current configuration with the hotkey thread, even if
-        # KeyPaster is temporarily suspended while its own window has focus.
         self._registration_errors = self.hotkeys.reload(self.config.mappings)
         should_suspend = self.manual_paused or self._is_ui_focused()
         state_errors = self.hotkeys.set_suspended(should_suspend)
@@ -424,9 +480,9 @@ class KeyPasterUI:
             return
         active = len(self.config.mappings) - len(self._registration_errors)
         if self._registration_errors:
-            self._set_status("warning", f"Active · {active}/{len(self.config.mappings)} mappings")
+            self._set_status("warning", f"Active | {active}/{len(self.config.mappings)} mappings")
         else:
-            self._set_status("ok", f"Active · {active} mapping{'s' if active != 1 else ''}")
+            self._set_status("ok", f"Active | {active} mapping{'s' if active != 1 else ''}")
 
     def set_runtime_status(self, level: str, message: str) -> None:
         self.root.after(0, lambda: self._set_status(level, message))
@@ -458,8 +514,23 @@ class KeyPasterUI:
         else:
             self.on_exit()
 
+    def _handle_unmap(self, event: tk.Event) -> None:
+        if event.widget is self.root:
+            self.root.after_idle(self._hide_if_minimized)
+
+    def _hide_if_minimized(self) -> None:
+        try:
+            if self.root.state() == "iconic":
+                self.on_hide()
+        except tk.TclError:
+            pass
+
     def show(self) -> None:
         self.root.deiconify()
+        try:
+            self.root.state("normal")
+        except tk.TclError:
+            pass
         self.root.lift()
         self.root.after(50, self.root.focus_force)
 

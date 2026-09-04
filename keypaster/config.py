@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 
+from .actions import ACTION_BY_ID, PASTE_TEXT
 from .keys import KEY_BY_ID
 from .models import AppConfig
 
@@ -60,5 +61,7 @@ class ConfigStore:
                     f"The key '{mapping.key}' is assigned more than once. Each key can have one mapping."
                 )
             seen_keys.add(mapping.key)
-            if not mapping.text:
+            if mapping.action not in ACTION_BY_ID:
+                raise ConfigError(f"Unsupported action in configuration: {mapping.action}")
+            if mapping.action == PASTE_TEXT and not mapping.text:
                 raise ConfigError("Mapped text cannot be empty.")

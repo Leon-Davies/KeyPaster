@@ -5,6 +5,8 @@ import threading
 import time
 from typing import Callable
 
+from .actions import PASTE_TEXT, action_label, action_vk
+from .media import send_virtual_key
 from .models import KeyMapping
 from .windows import ClipboardController, send_ctrl_v
 
@@ -21,7 +23,7 @@ class PasteService:
         self._status_callback = status_callback or (lambda _level, _message: None)
         self._restore_delay = restore_delay
         self._queue: queue.Queue[KeyMapping | None] = queue.Queue(maxsize=20)
-        self._thread = threading.Thread(target=self._run, name="KeyPasterPaste", daemon=True)
+        self._thread = threading.Thread(target=self._run, name="KeyPasterActions", daemon=True)
         self._clipboard = ClipboardController()
         self._thread.start()
 
@@ -29,7 +31,7 @@ class PasteService:
         try:
             self._queue.put_nowait(mapping)
         except queue.Full:
-            self._status_callback("warning", "Paste queue is full; a key press was ignored.")
+            self._status_callback("warning", "Action queue is full; a key press was ignored.")
 
     def stop(self) -> None:
         try:
@@ -43,7 +45,17 @@ class PasteService:
             mapping = self._queue.get()
             if mapping is None:
                 return
+            self._execute(mapping)
+
+    def _execute(self, mapping: KeyMapping) -> None:
+        if mapping.action == PASTE_TEXT:
             self._paste(mapping)
+            return
+        try:
+            send_virtual_key(action_vk(mapping.action))
+            self._status_callback("ok", f"Ran {action_label(mapping.action)}.")
+        except Exception as exc:
+            self._status_callback("error", f"Action failed: {exc}")
 
     def _paste(self, mapping: KeyMapping) -> None:
         snapshot = None
@@ -70,7 +82,7 @@ class PasteService:
                     "Text pasted. Some uncommon clipboard formats could not be cloned; common text/image formats were preserved.",
                 )
             else:
-                self._status_callback("ok", f"Pasted “{mapping.name or mapping.key}”.")
+                self._status_callback("ok", f"Pasted {mapping.name or mapping.key}.")
         except Exception as exc:
             if snapshot is not None and clipboard_replaced:
                 try:
