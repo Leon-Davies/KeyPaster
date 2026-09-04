@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "keypaster"
-version = "0.1.0"
-description = "A small Windows utility that maps keys to reusable text snippets."
+version = "0.2.0"
+description = "A small Windows utility that maps keys to reusable text and media actions."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
