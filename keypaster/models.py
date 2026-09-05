@@ -7,6 +7,9 @@ from uuid import uuid4
 from .actions import PASTE_TEXT
 
 
+CURRENT_CONFIG_VERSION = 2
+
+
 @dataclass(slots=True)
 class KeyMapping:
     id: str
@@ -52,14 +55,25 @@ class KeyMapping:
 @dataclass(slots=True)
 class AppSettings:
     start_with_windows: bool = False
-    close_to_tray: bool = True
+    minimize_to_tray: bool = False
+    close_to_tray: bool = False
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "AppSettings":
+    def from_dict(
+        cls,
+        data: dict[str, Any] | None,
+        *,
+        legacy_config: bool = False,
+    ) -> "AppSettings":
         data = data or {}
+        if legacy_config:
+            # Earlier releases silently defaulted close-to-tray on and had no
+            # minimize setting. Reset both to the safer taskbar behaviour.
+            return cls(start_with_windows=bool(data.get("start_with_windows", False)))
         return cls(
             start_with_windows=bool(data.get("start_with_windows", False)),
-            close_to_tray=bool(data.get("close_to_tray", True)),
+            minimize_to_tray=bool(data.get("minimize_to_tray", False)),
+            close_to_tray=bool(data.get("close_to_tray", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,16 +82,20 @@ class AppSettings:
 
 @dataclass(slots=True)
 class AppConfig:
-    version: int = 1
+    version: int = CURRENT_CONFIG_VERSION
     mappings: list[KeyMapping] = field(default_factory=list)
     settings: AppSettings = field(default_factory=AppSettings)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "AppConfig":
+        source_version = int(data.get("version", 1))
         return cls(
-            version=int(data.get("version", 1)),
+            version=CURRENT_CONFIG_VERSION,
             mappings=[KeyMapping.from_dict(item) for item in data.get("mappings", [])],
-            settings=AppSettings.from_dict(data.get("settings")),
+            settings=AppSettings.from_dict(
+                data.get("settings"),
+                legacy_config=source_version < CURRENT_CONFIG_VERSION,
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
