@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -31,7 +32,7 @@ class PasteService:
         try:
             self._queue.put_nowait(mapping)
         except queue.Full:
-            self._status_callback("warning", "Action queue is full; a key press was ignored.")
+            self._emit_status("warning", "Action queue is full; a key press was ignored.")
 
     def stop(self) -> None:
         try:
@@ -40,12 +41,23 @@ class PasteService:
             pass
         self._thread.join(timeout=2)
 
+    def _emit_status(self, level: str, message: str) -> None:
+        try:
+            self._status_callback(level, message)
+        except Exception:
+            logging.exception("Status callback failed")
+
     def _run(self) -> None:
         while True:
             mapping = self._queue.get()
             if mapping is None:
                 return
-            self._execute(mapping)
+            try:
+                self._execute(mapping)
+            except Exception:
+                # Never let one action terminate the long-lived action worker.
+                logging.exception("Unhandled action worker failure")
+                self._emit_status("error", "An action failed. KeyPaster is still running.")
 
     def _execute(self, mapping: KeyMapping) -> None:
         if mapping.action == PASTE_TEXT:
@@ -53,9 +65,9 @@ class PasteService:
             return
         try:
             send_virtual_key(action_vk(mapping.action))
-            self._status_callback("ok", f"Ran {action_label(mapping.action)}.")
+            self._emit_status("ok", f"Ran {action_label(mapping.action)}.")
         except Exception as exc:
-            self._status_callback("error", f"Action failed: {exc}")
+            self._emit_status("error", f"Action failed: {exc}")
 
     def _paste(self, mapping: KeyMapping) -> None:
         snapshot = None
@@ -63,7 +75,7 @@ class PasteService:
         try:
             snapshot = self._clipboard.snapshot()
             if snapshot.skipped_formats and not snapshot.formats:
-                self._status_callback(
+                self._emit_status(
                     "error",
                     "Paste cancelled to protect the clipboard: its current format cannot be cloned safely.",
                 )
@@ -77,20 +89,20 @@ class PasteService:
             clipboard_replaced = False
 
             if snapshot.skipped_formats:
-                self._status_callback(
+                self._emit_status(
                     "warning",
                     "Text pasted. Some uncommon clipboard formats could not be cloned; common text/image formats were preserved.",
                 )
             else:
-                self._status_callback("ok", f"Pasted {mapping.name or mapping.key}.")
+                self._emit_status("ok", f"Pasted {mapping.name or mapping.key}.")
         except Exception as exc:
             if snapshot is not None and clipboard_replaced:
                 try:
                     self._clipboard.restore(snapshot)
                 except Exception as restore_exc:
-                    self._status_callback(
+                    self._emit_status(
                         "error",
                         f"Paste failed and clipboard restoration also failed: {restore_exc}",
                     )
                     return
-            self._status_callback("error", f"Paste failed: {exc}")
+            self._emit_status("error", f"Paste failed: {exc}")
