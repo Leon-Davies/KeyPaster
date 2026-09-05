@@ -43,10 +43,11 @@ class KeyPasterUI:
         self.manual_paused = False
         self._focus_suspended: bool | None = None
         self._registration_errors: dict[str, str] = {}
+        self._tray_available = False
 
         self.root.title("KeyPaster")
-        self.root.geometry("960x690")
-        self.root.minsize(820, 600)
+        self.root.geometry("960x720")
+        self.root.minsize(820, 620)
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self._handle_close)
         self.root.bind("<Unmap>", self._handle_unmap, add="+")
@@ -55,10 +56,14 @@ class KeyPasterUI:
         self._build_ui()
         self._refresh_mappings()
         self._apply_hotkeys(show_errors=False)
-        self._sync_startup_checkbox()
+        self._sync_settings_controls()
         self._poll_focus_state()
         if not self.config.mappings:
             self._new_mapping()
+
+    @property
+    def can_hide_to_tray(self) -> bool:
+        return self._tray_available
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -104,7 +109,7 @@ class KeyPasterUI:
         self.pause_button.pack(side="right", pady=4)
 
         body = tk.Frame(self.root, bg=BG)
-        body.pack(fill="both", expand=True, padx=26, pady=(0, 18))
+        body.pack(fill="both", expand=True, padx=26, pady=(0, 16))
         body.grid_columnconfigure(0, weight=4, uniform="body")
         body.grid_columnconfigure(1, weight=5, uniform="body")
         body.grid_rowconfigure(0, weight=1)
@@ -117,8 +122,7 @@ class KeyPasterUI:
         left_heading = tk.Frame(left, bg=CARD)
         left_heading.grid(row=0, column=0, sticky="ew", padx=18, pady=(18, 10))
         tk.Label(left_heading, text="Mappings", font=("Segoe UI Semibold", 14), fg=TEXT, bg=CARD).pack(side="left")
-        self.new_button = self._primary_button(left_heading, "+ New mapping", self._new_mapping)
-        self.new_button.pack(side="right")
+        self._primary_button(left_heading, "+ New mapping", self._new_mapping).pack(side="right")
 
         tk.Label(
             left,
@@ -219,32 +223,43 @@ class KeyPasterUI:
 
         actions = tk.Frame(right, bg=CARD)
         actions.grid(row=10, column=0, sticky="ew", padx=22, pady=(0, 14))
-        self.save_button = self._primary_button(actions, "Save mapping", self._save_mapping)
-        self.save_button.pack(side="left")
-        self.delete_button = self._secondary_button(actions, "Delete", self._delete_mapping, danger=True)
-        self.delete_button.pack(side="left", padx=(8, 0))
-        self.clear_button = self._secondary_button(actions, "Clear", self._new_mapping)
-        self.clear_button.pack(side="right")
+        self._primary_button(actions, "Save mapping", self._save_mapping).pack(side="left")
+        self._secondary_button(actions, "Delete", self._delete_mapping, danger=True).pack(side="left", padx=(8, 0))
+        self._secondary_button(actions, "Clear", self._new_mapping).pack(side="right")
 
         settings = tk.Frame(self.root, bg=BG)
-        settings.pack(fill="x", padx=28, pady=(0, 8))
+        settings.pack(fill="x", padx=28, pady=(0, 10))
+
         self.startup_var = tk.BooleanVar(value=False)
         self.startup_check = ttk.Checkbutton(
             settings,
-            text="Start KeyPaster with Windows",
+            text="Start with Windows",
             variable=self.startup_var,
             command=self._toggle_startup,
         )
         self.startup_check.pack(side="left")
         if not is_frozen():
             self.startup_check.state(["disabled"])
-            tk.Label(
-                settings,
-                text="(available in the packaged .exe)",
-                font=("Segoe UI", 8),
-                fg=MUTED,
-                bg=BG,
-            ).pack(side="left", padx=(4, 0))
+
+        self.minimize_tray_var = tk.BooleanVar(value=False)
+        self.minimize_tray_check = ttk.Checkbutton(
+            settings,
+            text="Minimize to tray",
+            variable=self.minimize_tray_var,
+            command=self._toggle_tray_settings,
+        )
+        self.minimize_tray_check.pack(side="left", padx=(16, 0))
+        self.minimize_tray_check.state(["disabled"])
+
+        self.close_tray_var = tk.BooleanVar(value=False)
+        self.close_tray_check = ttk.Checkbutton(
+            settings,
+            text="Close to tray",
+            variable=self.close_tray_var,
+            command=self._toggle_tray_settings,
+        )
+        self.close_tray_check.pack(side="left", padx=(12, 0))
+        self.close_tray_check.state(["disabled"])
 
         self.status_label = tk.Label(
             settings,
@@ -370,8 +385,7 @@ class KeyPasterUI:
     def _save_mapping(self) -> None:
         label = self.key_var.get().strip()
         key_id = KEY_ID_BY_LABEL.get(label)
-        action_name = self.action_var.get().strip()
-        action_id = ACTION_ID_BY_LABEL.get(action_name)
+        action_id = ACTION_ID_BY_LABEL.get(self.action_var.get().strip())
         text = self.text_box.get("1.0", "end-1c") if action_id == PASTE_TEXT else ""
         name = self.name_var.get().strip()
         if not key_id:
@@ -455,8 +469,7 @@ class KeyPasterUI:
         self.root.after(250, self._poll_focus_state)
 
     def _sync_hotkey_suspension(self, force: bool = False) -> None:
-        focused = self._is_ui_focused()
-        desired = self.manual_paused or focused
+        desired = self.manual_paused or self._is_ui_focused()
         if force or desired != self._focus_suspended:
             self._focus_suspended = desired
             errors = self.hotkeys.set_suspended(desired)
@@ -485,7 +498,8 @@ class KeyPasterUI:
             self._set_status("ok", f"Active | {active} mapping{'s' if active != 1 else ''}")
 
     def set_runtime_status(self, level: str, message: str) -> None:
-        self.root.after(0, lambda: self._set_status(level, message))
+        # This method is called only by UiDispatcher on the Tk main thread.
+        self._set_status(level, message)
 
     def _set_status(self, level: str, message: str) -> None:
         colors = {"ok": SUCCESS, "warning": WARNING, "error": DANGER, "info": MUTED}
@@ -494,8 +508,10 @@ class KeyPasterUI:
     def _find_mapping(self, mapping_id: str) -> KeyMapping | None:
         return next((mapping for mapping in self.config.mappings if mapping.id == mapping_id), None)
 
-    def _sync_startup_checkbox(self) -> None:
+    def _sync_settings_controls(self) -> None:
         self.startup_var.set(self.config.settings.start_with_windows if is_frozen() else False)
+        self.minimize_tray_var.set(self.config.settings.minimize_to_tray)
+        self.close_tray_var.set(self.config.settings.close_to_tray)
 
     def _toggle_startup(self) -> None:
         enabled = bool(self.startup_var.get())
@@ -508,19 +524,50 @@ class KeyPasterUI:
             self.startup_var.set(not enabled)
             messagebox.showerror("Could not update startup", str(exc), parent=self.root)
 
+    def _toggle_tray_settings(self) -> None:
+        if not self._tray_available:
+            self.minimize_tray_var.set(False)
+            self.close_tray_var.set(False)
+        self.config.settings.minimize_to_tray = bool(self.minimize_tray_var.get())
+        self.config.settings.close_to_tray = bool(self.close_tray_var.get())
+        try:
+            self.config_store.save(self.config)
+            self._set_status("ok", "Tray settings updated.")
+        except ConfigError as exc:
+            messagebox.showerror("Could not save settings", str(exc), parent=self.root)
+
+    def set_tray_available(self, available: bool) -> None:
+        self._tray_available = available
+        if available:
+            self.minimize_tray_check.state(["!disabled"])
+            self.close_tray_check.state(["!disabled"])
+            self._sync_settings_controls()
+            return
+
+        self.minimize_tray_check.state(["disabled"])
+        self.close_tray_check.state(["disabled"])
+        self.minimize_tray_var.set(False)
+        self.close_tray_var.set(False)
+        self.config.settings.minimize_to_tray = False
+        self.config.settings.close_to_tray = False
+        try:
+            self.config_store.save(self.config)
+        except ConfigError:
+            pass
+
     def _handle_close(self) -> None:
-        if self.config.settings.close_to_tray:
+        if self._tray_available and self.config.settings.close_to_tray:
             self.on_hide()
         else:
             self.on_exit()
 
     def _handle_unmap(self, event: tk.Event) -> None:
-        if event.widget is self.root:
+        if event.widget is self.root and self._tray_available and self.config.settings.minimize_to_tray:
             self.root.after_idle(self._hide_if_minimized)
 
     def _hide_if_minimized(self) -> None:
         try:
-            if self.root.state() == "iconic":
+            if self._tray_available and self.config.settings.minimize_to_tray and self.root.state() == "iconic":
                 self.on_hide()
         except tk.TclError:
             pass
