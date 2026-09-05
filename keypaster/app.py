@@ -4,12 +4,15 @@ import argparse
 import logging
 import os
 import sys
+import threading
 import tkinter as tk
 from pathlib import Path
 
 from .config import ConfigError, ConfigStore
+from .dispatcher import UiDispatcher
 from .models import AppConfig
 from .service import PasteService
+from .single_instance import SingleInstance
 from .ui import KeyPasterUI
 from .windows import HotkeyManager
 
@@ -27,7 +30,7 @@ def _configure_logging() -> None:
     logging.basicConfig(
         filename=log_dir / "keypaster.log",
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s %(levelname)s %(threadName)s %(name)s: %(message)s",
     )
 
 
@@ -44,10 +47,10 @@ def _tray_icon_image():
 
     image = Image.new("RGBA", (64, 64), (35, 104, 211, 255))
     draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((10, 8, 54, 56), radius=9, fill=(255, 255, 255, 255))
-    draw.rectangle((20, 20, 44, 24), fill=(35, 104, 211, 255))
-    draw.rectangle((20, 30, 44, 34), fill=(35, 104, 211, 255))
-    draw.rectangle((20, 40, 36, 44), fill=(35, 104, 211, 255))
+    draw.rounded_rectangle((8, 8, 56, 56), radius=10, fill=(255, 255, 255, 255))
+    draw.rectangle((18, 20, 46, 25), fill=(35, 104, 211, 255))
+    draw.rectangle((18, 31, 46, 36), fill=(35, 104, 211, 255))
+    draw.rectangle((18, 42, 38, 47), fill=(35, 104, 211, 255))
     return image
 
 
@@ -57,15 +60,41 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     parser = argparse.ArgumentParser(description="KeyPaster desktop application")
-    parser.add_argument("--minimized", action="store_true", help="Start hidden in the notification area")
+    parser.add_argument("--minimized", action="store_true", help="Start minimized")
     args = parser.parse_args(argv)
 
     _configure_logging()
+
+    instance = SingleInstance()
+    if not instance.is_primary:
+        try:
+            instance.signal_existing()
+        finally:
+            instance.close()
+        return 0
+
     store = ConfigStore()
     config = _load_config(store)
 
     root = tk.Tk()
     root.withdraw()
+    dispatcher = UiDispatcher(root)
+
+    def report_tk_exception(exc_type, exc_value, exc_traceback) -> None:
+        logging.error("Tk callback failed", exc_info=(exc_type, exc_value, exc_traceback))
+
+    root.report_callback_exception = report_tk_exception
+
+    previous_thread_hook = threading.excepthook
+
+    def report_thread_exception(args: threading.ExceptHookArgs) -> None:
+        logging.error(
+            "Unhandled background thread exception",
+            exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+        )
+        previous_thread_hook(args)
+
+    threading.excepthook = report_thread_exception
 
     shutting_down = False
     tray = None
@@ -74,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     def runtime_status(level: str, message: str) -> None:
         logging.log(logging.ERROR if level == "error" else logging.INFO, message)
         if ui:
-            ui.set_runtime_status(level, message)
+            dispatcher.post(ui.set_runtime_status, level, message)
 
     paste_service = PasteService(status_callback=runtime_status)
     hotkeys = HotkeyManager(on_hotkey=paste_service.submit)
@@ -82,11 +111,11 @@ def main(argv: list[str] | None = None) -> int:
 
     def show_window() -> None:
         if ui:
-            root.after(0, ui.show)
+            ui.show()
 
     def hide_window() -> None:
         if ui:
-            root.after(0, ui.hide)
+            ui.hide()
 
     def shutdown() -> None:
         nonlocal shutting_down
@@ -100,8 +129,17 @@ def main(argv: list[str] | None = None) -> int:
             logging.exception("Tray shutdown failed")
         try:
             hotkeys.stop()
-        finally:
+        except Exception:
+            logging.exception("Hotkey shutdown failed")
+        try:
             paste_service.stop()
+        except Exception:
+            logging.exception("Action worker shutdown failed")
+        try:
+            instance.close()
+        except Exception:
+            logging.exception("Single-instance shutdown failed")
+        dispatcher.stop()
         try:
             root.quit()
             root.destroy()
@@ -116,6 +154,8 @@ def main(argv: list[str] | None = None) -> int:
         on_exit=shutdown,
         on_hide=hide_window,
     )
+    dispatcher.start()
+    instance.start_watcher(lambda: dispatcher.post(show_window))
 
     try:
         import pystray
@@ -123,19 +163,29 @@ def main(argv: list[str] | None = None) -> int:
         tray = pystray.Icon(
             APP_NAME,
             _tray_icon_image(),
-            APP_NAME,
+            "KeyPaster - double-click to open",
             menu=pystray.Menu(
-                pystray.MenuItem("Open KeyPaster", lambda _icon, _item: show_window(), default=True),
-                pystray.MenuItem("Exit", lambda _icon, _item: root.after(0, shutdown)),
+                pystray.MenuItem(
+                    "Open KeyPaster",
+                    lambda _icon, _item: dispatcher.post(show_window),
+                    default=True,
+                ),
+                pystray.MenuItem("Exit", lambda _icon, _item: dispatcher.post(shutdown)),
             ),
         )
         tray.run_detached()
+        ui.set_tray_available(True)
     except Exception:
         logging.exception("Could not create notification-area icon")
         tray = None
+        ui.set_tray_available(False)
 
     if args.minimized:
-        ui.hide()
+        if ui.can_hide_to_tray and config.settings.minimize_to_tray:
+            ui.hide()
+        else:
+            ui.show()
+            root.iconify()
     else:
         ui.show()
 
@@ -144,4 +194,5 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if not shutting_down:
             shutdown()
+        threading.excepthook = previous_thread_hook
     return 0
