@@ -8,6 +8,7 @@ import threading
 import tkinter as tk
 from pathlib import Path
 
+from . import __version__
 from .config import ConfigError, ConfigStore
 from .dispatcher import UiDispatcher
 from .models import AppConfig
@@ -38,7 +39,7 @@ def _load_config(store: ConfigStore) -> AppConfig:
     try:
         return store.load()
     except ConfigError as exc:
-        logging.exception("Configuration could not be loaded")
+        logging.exception("Configuration could not be loaded from %s", store.path)
         raise SystemExit(str(exc)) from exc
 
 
@@ -64,16 +65,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     _configure_logging()
+    store = ConfigStore()
+    frozen = bool(getattr(sys, "frozen", False))
+    try:
+        entrypoint = str(Path(sys.argv[0]).resolve())
+    except OSError:
+        entrypoint = sys.argv[0]
+    logging.info(
+        "START KeyPaster version=%s pid=%s frozen=%s executable=%s entrypoint=%s config=%s",
+        __version__,
+        os.getpid(),
+        frozen,
+        sys.executable,
+        entrypoint,
+        store.path,
+    )
 
     instance = SingleInstance()
     if not instance.is_primary:
+        logging.info("SECONDARY instance detected; signalling existing KeyPaster and exiting")
         try:
             instance.signal_existing()
         finally:
             instance.close()
         return 0
 
-    store = ConfigStore()
     config = _load_config(store)
 
     root = tk.Tk()
@@ -122,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         if shutting_down:
             return
         shutting_down = True
+        logging.info("SHUTDOWN KeyPaster version=%s pid=%s", __version__, os.getpid())
         try:
             if tray:
                 tray.stop()
@@ -154,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         on_exit=shutdown,
         on_hide=hide_window,
     )
+    root.title(f"KeyPaster {__version__}")
     dispatcher.start()
     instance.start_watcher(lambda: dispatcher.post(show_window))
 
@@ -163,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         tray = pystray.Icon(
             APP_NAME,
             _tray_icon_image(),
-            "KeyPaster - double-click to open",
+            f"KeyPaster {__version__} - double-click to open",
             menu=pystray.Menu(
                 pystray.MenuItem(
                     "Open KeyPaster",
