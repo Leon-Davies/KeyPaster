@@ -2,13 +2,13 @@
 
 KeyPaster is a small Windows utility built entirely in **Python**.
 
-Map a keyboard key to either:
+Map a keyboard key to:
 
 - reusable text
 - volume up/down or mute
 - play/pause, next track, previous track, or stop
 
-For text mappings, KeyPaster saves your clipboard, pastes the text, then restores your previous clipboard. It is useful as a simple AutoHotkey replacement when you only need fixed text shortcuts, especially for repeated prompts when managing multiple AI or coding agents.
+For text mappings, KeyPaster saves your clipboard, pastes the text, then restores your previous clipboard. It is useful as a simple AutoHotkey replacement for fixed text shortcuts, especially repeated prompts when managing multiple AI or coding agents.
 
 ![KeyPaster](docs/keypaster-ui.png)
 
@@ -16,20 +16,19 @@ For text mappings, KeyPaster saves your clipboard, pastes the text, then restore
 
 **Requires Windows 10/11 and Python 3.11+.**
 
-1. Download this repository with **Code > Download ZIP**.
+1. Download with **Code > Download ZIP**.
 2. Extract it.
 3. Double-click `Run-KeyPaster.bat`.
-
-The first launch creates its own Python environment automatically.
 
 ## Use
 
 1. Click **New mapping**.
-2. Choose the key you want to replace.
-3. Choose an action.
-4. Add text if using **Paste text**.
-5. Click **Save mapping**.
+2. Choose a key and action.
+3. Add text if using **Paste text**.
+4. Click **Save mapping**.
 
-Minimizing or closing KeyPaster sends it to the system tray. Your mappings stay active and are saved between launches.
+Mappings are saved between launches.
+
+Tray hiding is optional. Enable **Minimize to tray** or **Close to tray** in KeyPaster if you want it.
 
 To build a standalone executable, run `Build-KeyPaster.bat`.
