@@ -72,8 +72,17 @@ class PasteService:
     def _paste(self, mapping: KeyMapping) -> None:
         snapshot = None
         clipboard_replaced = False
+        label = mapping.name or mapping.key
+        logging.info("PASTE_BEGIN mapping=%s", label)
         try:
             snapshot = self._clipboard.snapshot()
+            logging.info(
+                "PASTE_SNAPSHOT mapping=%s captured_formats=%d skipped_formats=%d captured_bytes=%d",
+                label,
+                len(snapshot.formats),
+                len(snapshot.skipped_formats),
+                sum(len(item.data) for item in snapshot.formats),
+            )
             if snapshot.skipped_formats and not snapshot.formats:
                 self._emit_status(
                     "error",
@@ -83,10 +92,13 @@ class PasteService:
 
             self._clipboard.set_text(mapping.text)
             clipboard_replaced = True
+            logging.info("PASTE_CLIPBOARD_REPLACED mapping=%s", label)
             send_ctrl_v()
+            logging.info("PASTE_INPUT_SENT mapping=%s", label)
             time.sleep(self._restore_delay)
             self._clipboard.restore(snapshot)
             clipboard_replaced = False
+            logging.info("PASTE_RESTORED mapping=%s", label)
 
             if snapshot.skipped_formats:
                 self._emit_status(
@@ -94,8 +106,9 @@ class PasteService:
                     "Text pasted. Some uncommon clipboard formats could not be cloned; common text/image formats were preserved.",
                 )
             else:
-                self._emit_status("ok", f"Pasted {mapping.name or mapping.key}.")
+                self._emit_status("ok", f"Pasted {label}.")
         except Exception as exc:
+            logging.exception("Paste action failed at runtime for mapping=%s", label)
             if snapshot is not None and clipboard_replaced:
                 try:
                     self._clipboard.restore(snapshot)
