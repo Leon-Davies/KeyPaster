@@ -28,13 +28,58 @@ WM_RELOAD = WM_APP + 41
 WM_STOP = WM_APP + 42
 MOD_NOREPEAT = 0x4000
 PM_NOREMOVE = 0x0000
+
+CF_TEXT = 1
+CF_BITMAP = 2
+CF_OEMTEXT = 7
+CF_DIB = 8
 CF_UNICODETEXT = 13
+CF_ENHMETAFILE = 14
+CF_HDROP = 15
+CF_LOCALE = 16
+CF_DIBV5 = 17
+CF_PRIVATEFIRST = 0x0200
+CF_PRIVATELAST = 0x02FF
+CF_GDIOBJFIRST = 0x0300
+CF_GDIOBJLAST = 0x03FF
+REGISTERED_FORMAT_FIRST = 0xC000
+REGISTERED_FORMAT_LAST = 0xFFFF
+
+# Standard formats documented as global-memory payloads. Registered formats are
+# also required by Windows to use HGLOBAL. Formats such as CF_BITMAP and
+# CF_ENHMETAFILE carry typed handles and must never be passed to GlobalLock.
+SAFE_HGLOBAL_STANDARD_FORMATS = frozenset(
+    {
+        CF_TEXT,
+        CF_OEMTEXT,
+        CF_DIB,
+        CF_UNICODETEXT,
+        CF_HDROP,
+        CF_LOCALE,
+        CF_DIBV5,
+    }
+)
+DEFAULT_MAX_FORMAT_BYTES = 32 * 1024 * 1024
+DEFAULT_MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
+
 GMEM_MOVEABLE = 0x0002
 GMEM_ZEROINIT = 0x0040
 INPUT_KEYBOARD = 1
 KEYEVENTF_KEYUP = 0x0002
 VK_CONTROL = 0x11
 VK_V = 0x56
+
+
+def is_hglobal_clipboard_format(format_id: int) -> bool:
+    """Return whether Windows documents this clipboard format as HGLOBAL-backed."""
+
+    if format_id in SAFE_HGLOBAL_STANDARD_FORMATS:
+        return True
+    if CF_GDIOBJFIRST <= format_id <= CF_GDIOBJLAST:
+        return True
+    if REGISTERED_FORMAT_FIRST <= format_id <= REGISTERED_FORMAT_LAST:
+        return True
+    return False
 
 
 if os.name == "nt":
@@ -137,18 +182,27 @@ class ClipboardSnapshot:
 
 
 class ClipboardController:
-    """Copies HGLOBAL-backed clipboard formats so they can be restored after a paste.
+    """Safely clone HGLOBAL-backed clipboard formats for temporary replacement.
 
-    This covers the common Windows clipboard payloads used for Unicode/plain text,
-    HTML/RTF, DIB images, file-drop payloads and many registered custom formats.
-    Handle-only formats (for example a raw CF_BITMAP handle) are skipped rather than
-    copied unsafely; common applications generally expose a DIB representation too.
+    KeyPaster intentionally skips typed-handle/private formats instead of calling
+    GlobalLock on an object whose handle type is not guaranteed. Common text,
+    DIB images, file drops and registered formats such as HTML/RTF are retained.
+    Snapshot size limits prevent a very large clipboard payload from destabilising
+    the long-running process.
     """
 
-    def __init__(self, retries: int = 12, retry_delay: float = 0.02) -> None:
+    def __init__(
+        self,
+        retries: int = 12,
+        retry_delay: float = 0.02,
+        max_format_bytes: int = DEFAULT_MAX_FORMAT_BYTES,
+        max_snapshot_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES,
+    ) -> None:
         _require_windows()
         self.retries = retries
         self.retry_delay = retry_delay
+        self.max_format_bytes = max_format_bytes
+        self.max_snapshot_bytes = max_snapshot_bytes
 
     def _open(self) -> None:
         for _ in range(self.retries):
@@ -162,13 +216,22 @@ class ClipboardController:
         self._open()
         captured: list[ClipboardFormatData] = []
         skipped: list[int] = []
+        captured_bytes = 0
         try:
             fmt = 0
             while True:
                 ctypes.set_last_error(0)
                 fmt = int(user32.EnumClipboardFormats(fmt))
                 if fmt == 0:
+                    error = ctypes.get_last_error()
+                    if error:
+                        raise ctypes.WinError(error)
                     break
+
+                if not is_hglobal_clipboard_format(fmt):
+                    skipped.append(fmt)
+                    continue
+
                 handle = user32.GetClipboardData(fmt)
                 if not handle:
                     skipped.append(fmt)
@@ -177,12 +240,17 @@ class ClipboardController:
                 if size <= 0:
                     skipped.append(fmt)
                     continue
+                if size > self.max_format_bytes or captured_bytes + size > self.max_snapshot_bytes:
+                    skipped.append(fmt)
+                    continue
+
                 pointer = kernel32.GlobalLock(handle)
                 if not pointer:
                     skipped.append(fmt)
                     continue
                 try:
                     captured.append(ClipboardFormatData(fmt, ctypes.string_at(pointer, size)))
+                    captured_bytes += size
                 finally:
                     kernel32.GlobalUnlock(handle)
         finally:

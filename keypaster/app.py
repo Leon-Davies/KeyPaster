@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import logging
 import os
 import sys
 import threading
 import tkinter as tk
 from pathlib import Path
+from typing import TextIO
 
 from . import __version__
 from .config import ConfigError, ConfigStore
@@ -19,20 +21,42 @@ from .windows import HotkeyManager
 
 
 APP_NAME = "KeyPaster"
+_FAULT_LOG_HANDLE: TextIO | None = None
 
 
-def _configure_logging() -> None:
+def _log_dir() -> Path:
     if os.name == "nt":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     else:
         base = Path.home() / ".cache"
-    log_dir = base / APP_NAME
-    log_dir.mkdir(parents=True, exist_ok=True)
+    path = base / APP_NAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _configure_logging() -> None:
     logging.basicConfig(
-        filename=log_dir / "keypaster.log",
+        filename=_log_dir() / "keypaster.log",
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(threadName)s %(name)s: %(message)s",
     )
+
+
+def _configure_fatal_error_logging() -> None:
+    """Capture Python/native fatal faults that bypass normal exception logging."""
+
+    global _FAULT_LOG_HANDLE
+    try:
+        _FAULT_LOG_HANDLE = (_log_dir() / "keypaster-fault.log").open(
+            "a", encoding="utf-8", buffering=1
+        )
+        _FAULT_LOG_HANDLE.write(
+            f"\n=== START KeyPaster {__version__} pid={os.getpid()} executable={sys.executable} ===\n"
+        )
+        _FAULT_LOG_HANDLE.flush()
+        faulthandler.enable(file=_FAULT_LOG_HANDLE, all_threads=True)
+    except Exception:
+        logging.exception("Could not enable fatal-error logging")
 
 
 def _load_config(store: ConfigStore) -> AppConfig:
@@ -65,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     _configure_logging()
+    _configure_fatal_error_logging()
     store = ConfigStore()
     frozen = bool(getattr(sys, "frozen", False))
     try:
